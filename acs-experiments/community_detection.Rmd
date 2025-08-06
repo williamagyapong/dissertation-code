@@ -1,0 +1,416 @@
+---
+title: "Feature Clustering Via Community Detection"
+author: "William Agyapong"
+date: "2025-06-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+if (FALSE) {
+        # enabled the use of GitHub Copilot: Tools > Global Options > Copilot > Enable Copilot
+    
+    # the `chattr` is also recommended. Install it with the following command:
+    devtools::install_github("mlverse/chattr")
+    # Could also use the remotes package like so: remotes::install_github("mlverse/chattr")
+    
+    # Set LLM API Key, here we use OpenAI:
+    # "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"
+    
+    # Load the OPENAI API key from environment variable
+    readRenviron(".env")
+    # Sys.setenv(OPENAI_API_KEY = Sys.getenv("OPENAI_CHATTR_KEY"))
+    # Sys.setenv(OPENAI_API_KEY = "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")
+}
+
+
+# Load packages
+library(tidyverse)
+# Load the EGANET package
+library(EGAnet)
+
+library(reticulate)
+```
+
+This notebook contains codes for clustering features using community detection algorithms for various experiments conducted in my dissertation. The `EGANET` package was used as the source of implementation of the community detection algorithm used. 
+
+The notebook is organized as follows:
+
+- 
+
+Explore the following functions from the `EGAnet` package:
+
+- `community.compare()`: compares community detection solutions using permutation
+- `compare.EGA.plots()`: visually compare tow or more 'EGAnet' plots
+- `auto.correlate()`: automatic correlations
+
+
+See "Plotting with `EGAnet`": https://r-ega.net/articles/plotting.html
+
+
+# Helper Functions
+
+```{r}
+
+run_ega <- function(data, corr="auto", model="glasso", algo="louvain",
+                    layout = "circle", plot_ega=T) {
+    # corr = "cosine" # Doen't seem to work
+
+    ega_out <- EGA(data,
+                      model = model,
+                      algorithm = algo,
+                      # objective_function = "CPM",
+                      plot.EGA = plot_ega,
+                      corr = corr,
+                      layout = layout
+                  )
+    return(ega_out)
+}
+
+community_membership <- function(ega_object) {
+    communities <- ega_object$wc
+    
+    comm_df <- data.frame(
+        variables = names(communities),
+        membership = as.numeric(communities)
+    )
+    
+    return(comm_df)
+}
+
+
+plot_ega <- function(ega_net, legend_pos="bottom", legend_names=NULL, layout="circle") {
+    cm <- community_membership(ega_net)
+    if (is.null(legend_names)) legend_names <-  paste("G", 1:length(unique(cm$membership)))
+    
+    plot(ega_net,
+     legend.names = legend_names,
+     layout =  layout,# "eigen" "target"
+     vsize = 9,
+     edge.alpha = 1, # controls transparency
+     # edge.lty = c("dashed", "solid"),
+     edge.color = c("gray", "grey") # positive edge first and negative edge second
+     ) + theme(
+         legend.position = legend_pos
+     )
+}
+
+
+```
+
+## Dealing with isolated nodes
+
+```{r, warning=FALSE}
+# Set python environment
+reticulate::use_condaenv("/opt/miniconda3/envs/popgen2/bin/python")
+
+# import functions
+# Note that the functions become available in R as well for immediate use
+source_python("../utils.py")
+
+```
+
+```{r}
+reassign_singletons <- function(memberships, corr_matrix) {
+    # corr_matrix: must be a named matrix with variable names 
+    # as the names attribute
+ 
+  # Get list of singleton (NA) variables
+  singleton_vars <- names(memberships)[is.na(memberships)]
+  
+  # Get list of unique clusters
+  valid_clusters <- unique(na.omit(memberships))
+  
+  for (var in singleton_vars) {
+    # For each valid cluster, compute avg correlation with members
+    similarities <- sapply(valid_clusters, function(cluster_id) {
+      cluster_vars <- na.omit(names(memberships)[memberships == cluster_id])
+      mean(abs(as.numeric(corr_matrix[var, cluster_vars])), na.rm = TRUE)
+      
+    })
+    
+    # Assign to the most similar cluster
+    best_cluster <- valid_clusters[which.max(similarities)]
+    cat("Average similarities: ", similarities)
+    memberships[var] <- best_cluster
+  }
+  
+  return(memberships)
+}
+
+
+# reassign_singletons(adult_ega$wc, compute_cramers_v_matrix(adult))
+```
+
+# Dealing with mixed data types
+
+```{r}
+# Use the Gower distance metric
+diss_mat <- as.matrix(cluster::daisy(t(maryland_puma_source))); dim(diss_mat)
+norm_diss_mat <- diss_mat/(9*9)
+sim_mat <- 1-diss_mat
+norm_sim_mat <- sim_mat/sum(sim_mat)
+```
+
+```{r}
+cosine_mat <- as.matrix(EGAnet::cosine(maryland_puma_source)) # works, but performance not quite satisfactory!
+EGA(maryland_puma_source)
+EGA(cosine_mat, n=nrow(maryland_puma_source))
+```
+
+
+# The American Community Survey Experiments
+
+
+# Maryland data
+
+```{r}
+maryland_puma_source <- read_csv('../data/ACS/Maryland/counties/Anne Arundel/PUMA_1201_Sample_Treated.csv') |>
+    select(-PUMA) |>
+    mutate(
+        # transform WIF to range from 0-(max+1) 
+        WIF = WIF+1,
+        across(c(HHT, SEX, RAC1P, ESR), .fns=function(x) as.factor(x)),
+        across(c(HINCP, NP, WIF, HUPAC, AGEP), .fns=function(x) factor(x, ordered = T))
+        
+    )
+str(maryland_puma_source)
+
+maryland_county_source <- read_csv('../data/ACS/Maryland/maryland.csv') |>
+    filter(COUNTY == 'Anne Arundel') |>
+    select(-PUMA, -COUNTY) |>
+    mutate(
+        # transform WIF to range from 0-(max+1) 
+        WIF = WIF+1,
+        across(c(HHT, SEX, RAC1P, ESR), .fns=function(x) as.factor(x)),
+        across(c(HINCP, NP, WIF, HUPAC, AGEP), .fns=function(x) factor(x, ordered = T))
+    )
+str(maryland_county_source)
+
+maryland_source <- read_csv('./Maryland/state-source.csv') |>
+    mutate(
+        # transform WIF to range from 0-(max+1) 
+        # WIF = WIF+1,
+        across(c(HHT, SEX, RAC1P, ESR), .fns=function(x) as.factor(x)),
+        across(c(HINCP, NP, WIF, HUPAC, AGEP), .fns=function(x) factor(x, ordered = T))
+    )
+# Note that there 9 levels in `RACiP` but the PUMA source contains only 9 with levle 4 missing
+# Check if the target suffers from the same issue
+
+str(maryland_source)
+dim(maryland_puma_source)
+dim(maryland_county_source)
+dim(maryland_source)
+
+# Perform EGA on the PUMA data
+mps_ega <- run_ega(maryland_puma_source) # , corr = "spearman", leads to some unconnected nodes
+plot_ega(mps_ega)
+getwd()
+ggsave("Maryland/maryland-puma-communities.pdf")
+
+# Perform EGA on the County data
+mcs_ega <- run_ega(maryland_county_source)
+plot_ega(mcs_ega)
+getwd()
+ggsave("Maryland/maryland-county-communities.pdf")
+
+# Perform EGA on the whole state source data
+ms_ega <- run_ega(maryland_source)
+plot_ega(ms_ega)
+getwd()
+ggsave("Maryland/maryland-state-communities.pdf")
+
+
+# The same community structure for both PUMA and county
+```
+
+
+
+## Texas data
+
+```{r}
+# Load the data
+texas_10 <- read_csv('../data/ACS/Texas/texas_source_10.csv')
+elpaso <- read_csv('../data/ACS/Texas/El Paso/elpaso_treated.csv')
+dallas_county <- read_csv('../data/ACS/Texas/Dallas County/dallas_county_treated.csv')
+dallas_city <- read_csv('../data/ACS/Texas/Dallas City/dallas_city_treated.csv') # Dallas County as source and Dallas City as target
+
+dim(texas_10)
+dim(elpaso)
+dim(dallas_county)
+dim(dallas_city)
+
+# Drop the 'PUMA', 'NP', and 'JWRIP' columns
+clean_df <- function(data) {
+    
+    if ("PUMA" %in% names(data)) {
+        data <- data %>%
+            select(-PUMA) # Drop the PUMA column
+    }
+    data %>%
+        # select(-c(PUMA, NP, JWRIP))
+        # select(-PUMA) %>%
+        mutate(
+            WIF = (WIF + 1)
+        )
+}
+
+texas_10 <- clean_df(texas_10) # Source
+elpaso <- clean_df(elpaso) # Target
+dallas_county <- clean_df(dallas_county) # Source
+dallas_city <- clean_df(dallas_city) # Target
+
+dim(texas_10)
+dim(elpaso)
+dim(dallas_county)
+dim(dallas_city)
+
+names(dallas_county)
+```
+
+
+```{r}
+#------------- Perform EGA on the Texas 10 data which is used as the source
+texas_ega <- run_ega(texas_10, algo = "louvain")
+# Assign "SEX" to a cluster using the heuristic procedure
+# The algorithm assigns it to cluster 4
+reassign_singletons(texas_ega$wc, compute_cramers_v_matrix(texas_10))
+plot_ega(texas_ega, legend_pos = "right")
+getwd()
+ggsave("Texas/state-10pcd-communities.pdf")
+
+# Perform EGA on the Dallas County data which is used as the source
+dallas_ega <- run_ega(dallas_county)
+plot_ega(dallas_ega, legend_pos = "right")
+getwd()
+ggsave("Texas/dallas-county-communities.pdf")
+  # Create a list where each element is a cluster with its respective variables
+communities <- community_membership(ega_out)
+dallas_ega$TEFI
+
+# community_membership(ega_out) 
+
+# cluster a few set of variables (first 15)
+dallas_ega2 <- run_ega(dallas_county[, 1:15])
+
+```
+
+
+```{r}
+texas_ega$wc
+```
+
+### State Level
+
+```{python}
+import os
+os.getcwd()
+```
+
+
+```{python}
+texas = pd.read_csv('../data/ACS/Texas/texas_treated.csv')
+# 
+texas_source_20, texas_target_20 = source_target_split(texas, low=0.5, high=1.5, split_ratio= 0.2, random_seed=123)
+
+# Save the 20% source data for the feature clustering 
+texas_source_20.to_csv('../data/ACS/Texas/texas_source_20.csv', index=None)
+
+print(texas_source_20.shape, texas_target_20.shape)
+```
+
+
+```{r}
+# Clean data
+texas_20 <- clean_df(py$texas_source_20)
+
+#------------- Perform EGA on the Texas 10 data which is used as the source
+texas_20_ega <- run_ega(texas_20, algo = "louvain")
+# Assign "SEX" to a cluster using the heuristic procedure
+# The algorithm assigns it to cluster 4
+reassign_singletons(texas_20_ega$wc, compute_cramers_v_matrix(texas_20))
+plot_ega(texas_ega, legend_pos = "right")
+getwd()
+ggsave("Texas/state-10pcd-communities.pdf")
+
+# Perform EGA on the Dallas County data which is used as the source
+dallas_ega <- run_ega(dallas_county)
+plot_ega(dallas_ega, legend_pos = "right")
+getwd()
+ggsave("Texas/dallas-county-communities.pdf")
+  # Create a list where each element is a cluster with its respective variables
+communities <- community_membership(ega_out)
+dallas_ega$TEFI
+
+# community_membership(ega_out) 
+
+# cluster a few set of variables (first 15)
+dallas_ega2 <- run_ega(dallas_county[, 1:15])
+
+```
+
+
+# The UCI Adult Dataset
+
+```{r}
+adult <- read_csv('../data/adult-income/data/clean-adult-train.csv')
+
+dim(adult)
+```
+
+```{r}
+# Detect communities
+# Load the EGANET package
+library(EGAnet)
+# leiden: com
+adult_ega <- run_ega(adult)
+
+adult_ega$TEFI
+
+adult_comm <- community_membership(adult_ega)
+# Basic plot
+plot(adult_ega,
+     legend.names = c(paste("Clust", 1:length(adult_comm))),
+     layout =  "circle",# "eigen" "target"
+     vsize = 5,
+     edge.alpha = .5 # controls transparency
+     # edge.lty = c("dashed", "solid")
+     # edge.color = c("green", "green")
+     )
+
+# Edge line type and colors:
+# - Positive edge first
+# - Negative edge second
+
+#---- Or using the qgraph directly
+# qgraph(adult_ega$network, layout = "spring", vsize = 4, groups = as.factor(adult_ega$wc))
+
+plot_ega(adult_ega, legend_pos = "right")
+ggsave("./adult-income/adult-communities.pdf")
+ggsave("./adult-income/adult-communities.png")
+getwd()
+
+
+```
+
+> Can't rely on the partial correlation matrix given by the `EGAnet` package since the isolated variable (s) has zero partial correlation with the rest of the variables. So, we resort to manually computing the cramer's v matrix.
+
+**I want to give a formal description of this approach in my paper as a heuristic method to assign isolated variables**
+
+```{r, warning=FALSE}
+# Set python environment
+reticulate::use_condaenv("/opt/miniconda3/envs/popgen2/bin/python")
+
+# import functions
+# Note that the functions become available in R as well for immediate use
+source_python("../utils.py")
+
+```
+
+
+
+
+
+
+
