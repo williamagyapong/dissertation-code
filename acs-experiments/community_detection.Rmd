@@ -83,7 +83,12 @@ plot_ega <- function(ega_net, legend_pos="bottom", legend_names=NULL, layout="ci
 
 ```
 
+
 ## Dealing with isolated nodes
+
+> Can't rely on the partial correlation matrix given by the `EGAnet` package since the isolated variable (s) has zero partial correlation with the rest of the variables. So, we resort to manually computing the cramer's v matrix.
+
+**See a formal description of this approach in the dissertation as a heuristic method to assign isolated variables to a cluster.**
 
 ```{r, warning=FALSE}
 # Set python environment
@@ -362,19 +367,8 @@ getwd()
 
 ```
 
-> Can't rely on the partial correlation matrix given by the `EGAnet` package since the isolated variable (s) has zero partial correlation with the rest of the variables. So, we resort to manually computing the cramer's v matrix.
 
-**I want to give a formal description of this approach in my paper as a heuristic method to assign isolated variables**
 
-```{r, warning=FALSE}
-# Set python environment
-reticulate::use_condaenv("/opt/miniconda3/envs/popgen2/bin/python")
-
-# import functions
-# Note that the functions become available in R as well for immediate use
-source_python("../utils.py")
-
-```
 
 
 
