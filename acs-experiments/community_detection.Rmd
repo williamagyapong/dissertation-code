@@ -8,23 +8,6 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
-if (FALSE) {
-        # enabled the use of GitHub Copilot: Tools > Global Options > Copilot > Enable Copilot
-    
-    # the `chattr` is also recommended. Install it with the following command:
-    devtools::install_github("mlverse/chattr")
-    # Could also use the remotes package like so: remotes::install_github("mlverse/chattr")
-    
-    # Set LLM API Key, here we use OpenAI:
-    # "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"
-    
-    # Load the OPENAI API key from environment variable
-    readRenviron(".env")
-    # Sys.setenv(OPENAI_API_KEY = Sys.getenv("OPENAI_CHATTR_KEY"))
-    # Sys.setenv(OPENAI_API_KEY = "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")
-}
-
-
 # Load packages
 library(tidyverse)
 # Load the EGANET package
@@ -67,6 +50,7 @@ run_ega <- function(data, corr="auto", model="glasso", algo="louvain",
                   )
     return(ega_out)
 }
+
 
 community_membership <- function(ega_object) {
     communities <- ega_object$wc
@@ -141,22 +125,6 @@ reassign_singletons <- function(memberships, corr_matrix) {
 
 
 # reassign_singletons(adult_ega$wc, compute_cramers_v_matrix(adult))
-```
-
-# Dealing with mixed data types
-
-```{r}
-# Use the Gower distance metric
-diss_mat <- as.matrix(cluster::daisy(t(maryland_puma_source))); dim(diss_mat)
-norm_diss_mat <- diss_mat/(9*9)
-sim_mat <- 1-diss_mat
-norm_sim_mat <- sim_mat/sum(sim_mat)
-```
-
-```{r}
-cosine_mat <- as.matrix(EGAnet::cosine(maryland_puma_source)) # works, but performance not quite satisfactory!
-EGA(maryland_puma_source)
-EGA(cosine_mat, n=nrow(maryland_puma_source))
 ```
 
 
